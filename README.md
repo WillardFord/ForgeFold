@@ -75,3 +75,18 @@ Boltz-1 (2024) - Wohlwend, J., et al. "Boltz-1: Democratizing biomolecular inter
 1. Train ESM2 module
 3. Train entire thing
 4. Inference
+
+
+## Terms that I'm gonna google later:
+- atom37 vs atom14 as protein structure formats.
+- [BioEmu](https://www.nature.com/articles/s41592-025-02874-1) as a method for looking at polymer protein structures
+- [ESM model](https://huggingface.co/docs/transformers/en/model_doc/esm).
+- SwiGlu activation function. [paper](https://arxiv.org/pdf/2002.05202), [blog with easier to read implementation details](https://azizbelaweid.substack.com/p/what-is-swiglu-how-to-implement-it).
+- [Weights and Biases](https://wandb.ai/site/) for babying model during extremely long training times.
+- [Grouped Query Attention](https://arxiv.org/pdf/2305.13245): not every head has a different key, value pair. Queries are still unique. Reduces number of params. Multi Query Attention just uses a single key, value pair and different queries.
+-  [Multihead Latent Attention](https://arxiv.org/abs/2502.07864) and a nice [blog post](https://planetbanatt.net/articles/mla.html). Here we force all key, value pairs to be embedded into a low rank v space using 2 smaller matrices. Then our learnable space is smaller and we require an extra matmul each time, but we store way less data and can potentially have better results.
+
+## Quetions
+- How does ESM fold do protein tokenization?
+- What open models and weights are there for ESM2
+- What is the AlphaFold3 diffusion model structure? Is it opensource or openweight? How was it trained?
