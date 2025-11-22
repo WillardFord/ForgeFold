@@ -1,0 +1,11 @@
+# Ignore root-level markdown files
+/*.md
+
+# But keep README
+!README.md
+
+# Ignore data directory
+/data/
+
+# Ignore external dependencies
+/external/
