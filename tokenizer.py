@@ -58,3 +58,25 @@ class ESMCTokenizer:
     # optional utility
     def __len__(self):
         return len(self.vocab)
+
+    # -------------------------
+    # Read FASTA file
+    # -------------------------
+    def read_fasta(self, file_path: str):
+        samples = []
+        current_seq = []
+
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('>'):
+                    if current_seq:
+                        samples.append(''.join(current_seq))
+                        current_seq = []
+                else:
+                    current_seq.append(line)
+
+            if current_seq:
+                samples.append(''.join(current_seq))
+
+        return samples
