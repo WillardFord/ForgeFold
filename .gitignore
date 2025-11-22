@@ -9,3 +9,8 @@
 
 # Ignore external dependencies
 /external/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo

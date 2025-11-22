@@ -11,17 +11,14 @@ class ESMCTokenizer:
         # --- 20 canonical amino acids ---
         self.amino_acids = list("ACDEFGHIKLMNPQRSTVWY")
 
-        # --- Extended amino acids / placeholders ---
-        # From esm/tokenization/alphabet.py:
-        # U = selenocysteine
-        # O = pyrrolysine
-        # B/Z = ambiguous
-        # X = unknown
-        # '-' = gap
-        self.extended = ["U", "O", "B", "Z", "X", "-"]
+        # --- Unknown amino acid ---
+        self.extended = ["X"]
 
-        # Final vocab
-        self.vocab = self.special_tokens + self.amino_acids + self.extended
+        # --- Padding tokens to reach vocab_size=32 ---
+        self.padding_tokens = [f"<pad{i}>" for i in range(6)]
+
+        # Final vocab (32 tokens total)
+        self.vocab = self.special_tokens + self.amino_acids + self.extended + self.padding_tokens
 
         # maps
         self.tok_to_id = {tok: i for i, tok in enumerate(self.vocab)}
