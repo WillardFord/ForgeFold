@@ -12,6 +12,9 @@ import argparse
 from tqdm import tqdm
 import wandb
 import time
+import csv
+import os
+from pathlib import Path
 
 
 def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15):
@@ -53,6 +56,29 @@ def main(args):
     print("=" * 80)
     print("Protein Language Model Training")
     print("=" * 80)
+
+    # Setup CSV logging
+    batch_log_path = None
+    epoch_log_path = None
+    if args.log_dir:
+        os.makedirs(args.log_dir, exist_ok=True)
+        batch_log_path = os.path.join(args.log_dir, "batch_metrics.csv")
+        epoch_log_path = os.path.join(args.log_dir, "epoch_metrics.csv")
+
+        # Initialize batch log file
+        with open(batch_log_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'batch', 'loss', 'avg_loss', 'bucket_size',
+                           'num_sequences', 'actual_tokens', 'tokens_per_sec', 'step_time'])
+
+        # Initialize epoch log file
+        with open(epoch_log_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'train_loss', 'test_loss', 'epoch_time_minutes', 'total_batches'])
+
+        print(f"\nCSV logs will be saved to:")
+        print(f"  Batch metrics: {batch_log_path}")
+        print(f"  Epoch metrics: {epoch_log_path}")
 
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -183,6 +209,22 @@ def main(args):
                     "batch": batch_idx + 1,
                 })
 
+            # Log to CSV
+            if batch_log_path:
+                with open(batch_log_path, 'a', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow([
+                        epoch + 1,
+                        batch_idx + 1,
+                        loss.item(),
+                        avg_loss,
+                        bucket_size,
+                        num_seqs,
+                        actual_tokens,
+                        tokens_per_sec,
+                        step_time
+                    ])
+
         # Epoch summary
         train_avg_loss = total_loss / num_batches
         epoch_time = time.time() - epoch_start_time
@@ -208,6 +250,18 @@ def main(args):
                 "epoch/batches": num_batches,
                 "epoch": epoch + 1,
             })
+
+        # Log epoch metrics to CSV
+        if epoch_log_path:
+            with open(epoch_log_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    epoch + 1,
+                    train_avg_loss,
+                    test_loss,
+                    epoch_time / 60,
+                    num_batches
+                ])
 
         # Save checkpoint
         if args.save_dir and (epoch + 1) % args.save_interval == 0:
@@ -262,6 +316,8 @@ if __name__ == "__main__":
     # Logging arguments
     parser.add_argument("--log_interval", type=int, default=100,
                        help="Log every N batches")
+    parser.add_argument("--log_dir", type=str, default=None,
+                       help="Directory to save CSV logs (batch_metrics.csv and epoch_metrics.csv)")
     parser.add_argument("--save_dir", type=str, default=None,
                        help="Directory to save checkpoints")
     parser.add_argument("--save_interval", type=int, default=1,
