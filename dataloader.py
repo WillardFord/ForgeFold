@@ -14,9 +14,12 @@ from collections import defaultdict
 class BucketedProteinDataset(Dataset):
     """Dataset that buckets sequences by length for efficient batching"""
 
-    def __init__(self, fasta_path, tokenizer, max_length=16384):
+    def __init__(self, fasta_path, tokenizer, max_length=16384, split='train', test_split=0.1, seed=42):
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.split = split
+        self.test_split = test_split
+        self.seed = seed
 
         # Define power-of-2 buckets
         self.buckets = {
@@ -33,13 +36,17 @@ class BucketedProteinDataset(Dataset):
         print(f"Scanning {fasta_path} and bucketing sequences...")
         self._bucket_sequences(fasta_path)
 
+        # Split data into train/test
+        if test_split > 0:
+            self._split_data()
+
         # Flatten all buckets into a single list with bucket info
         self.samples = []
         for bucket_size, sequences in self.buckets.items():
             for seq in sequences:
                 self.samples.append((seq, bucket_size))
 
-        print(f"Total sequences loaded: {len(self.samples)}")
+        print(f"Total sequences loaded ({split}): {len(self.samples)}")
         self._print_bucket_stats()
 
     def _bucket_sequences(self, fasta_path):
@@ -70,6 +77,29 @@ class BucketedProteinDataset(Dataset):
                 self.buckets[8192].append(seq)
             else:
                 self.buckets[16384].append(seq)
+
+    def _split_data(self):
+        """Split each bucket into train/test sets"""
+        random.seed(self.seed)
+
+        for bucket_size in self.buckets.keys():
+            sequences = self.buckets[bucket_size]
+            if len(sequences) == 0:
+                continue
+
+            # Shuffle sequences deterministically
+            shuffled = sequences.copy()
+            random.shuffle(shuffled)
+
+            # Split into train/test
+            test_size = int(len(shuffled) * self.test_split)
+
+            if self.split == 'train':
+                self.buckets[bucket_size] = shuffled[test_size:]
+            elif self.split == 'test':
+                self.buckets[bucket_size] = shuffled[:test_size]
+            else:
+                raise ValueError(f"Unknown split: {self.split}")
 
     def _print_bucket_stats(self):
         """Print statistics about bucket distribution"""
@@ -182,7 +212,8 @@ def collate_fn(batch, tokenizer):
     }
 
 
-def create_dataloader(fasta_path, target_tokens=16384, shuffle=True, num_workers=0, max_length=16384):
+def create_dataloader(fasta_path, target_tokens=16384, shuffle=True, num_workers=0, max_length=16384,
+                      split='train', test_split=0.1, seed=42):
     """
     Create a bucketed dataloader for protein sequences with constant token budget
 
@@ -193,6 +224,9 @@ def create_dataloader(fasta_path, target_tokens=16384, shuffle=True, num_workers
         shuffle: Whether to shuffle batches
         num_workers: Number of workers for data loading
         max_length: Maximum sequence length to include
+        split: 'train' or 'test'
+        test_split: Fraction of data to use for test (default: 0.1 = 10%)
+        seed: Random seed for reproducible splits (default: 42)
 
     Returns:
         DataLoader with bucketed batching, tokenizer
@@ -204,7 +238,14 @@ def create_dataloader(fasta_path, target_tokens=16384, shuffle=True, num_workers
         - 1024-token sequences: batch_size = 16
     """
     tokenizer = ESMCTokenizer()
-    dataset = BucketedProteinDataset(fasta_path, tokenizer, max_length=max_length)
+    dataset = BucketedProteinDataset(
+        fasta_path,
+        tokenizer,
+        max_length=max_length,
+        split=split,
+        test_split=test_split,
+        seed=seed
+    )
 
     batch_sampler = BucketedBatchSampler(dataset, target_tokens=target_tokens, shuffle=shuffle)
 
@@ -220,6 +261,49 @@ def create_dataloader(fasta_path, target_tokens=16384, shuffle=True, num_workers
     )
 
     return dataloader, tokenizer
+
+
+def create_train_test_dataloaders(fasta_path, target_tokens=16384, num_workers=0, max_length=16384,
+                                   test_split=0.1, seed=42):
+    """
+    Create both train and test dataloaders with the same configuration
+
+    Args:
+        fasta_path: Path to FASTA file
+        target_tokens: Target number of tokens per batch
+        num_workers: Number of dataloader workers
+        max_length: Maximum sequence length
+        test_split: Fraction of data for test set (default: 0.1)
+        seed: Random seed for reproducible splits (default: 42)
+
+    Returns:
+        train_dataloader, test_dataloader, tokenizer
+    """
+    print("Creating train dataloader...")
+    train_dataloader, tokenizer = create_dataloader(
+        fasta_path=fasta_path,
+        target_tokens=target_tokens,
+        shuffle=True,
+        num_workers=num_workers,
+        max_length=max_length,
+        split='train',
+        test_split=test_split,
+        seed=seed
+    )
+
+    print("\nCreating test dataloader...")
+    test_dataloader, _ = create_dataloader(
+        fasta_path=fasta_path,
+        target_tokens=target_tokens,
+        shuffle=False,  # Don't shuffle test set
+        num_workers=num_workers,
+        max_length=max_length,
+        split='test',
+        test_split=test_split,
+        seed=seed
+    )
+
+    return train_dataloader, test_dataloader, tokenizer
 
 
 if __name__ == "__main__":

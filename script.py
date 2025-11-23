@@ -5,13 +5,48 @@ Uses bucketed dataloader with constant token budget for efficient training
 
 from loss import apply_mask, mlm_loss_function
 from plm import ProteinLanguageModel
-from dataloader import create_dataloader
+from dataloader import create_train_test_dataloaders
 import torch
 import torch.optim as optim
 import argparse
 from tqdm import tqdm
 import wandb
 import time
+
+
+def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15):
+    """
+    Evaluate model on a dataset
+
+    Returns:
+        avg_loss: Average loss over the dataset
+    """
+    model.eval()
+    total_loss = 0
+    num_batches = 0
+
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating"):
+            # Unpack batch dictionary and move to device
+            input_ids = batch['input_ids'].to(device)
+            attention_mask = batch['attention_mask'].to(device)
+
+            # Apply masking
+            masked_input, labels, mlm_mask = apply_mask(
+                input_ids,
+                mask_token_id=tokenizer.mask_idx,
+                mask_ratio=mask_ratio
+            )
+
+            # Forward pass
+            logits = model(masked_input, mask=attention_mask)
+            loss = mlm_loss_function(logits, labels, mlm_mask)
+
+            total_loss += loss.item()
+            num_batches += 1
+
+    avg_loss = total_loss / num_batches if num_batches > 0 else 0
+    return avg_loss
 
 
 def main(args):
@@ -59,20 +94,23 @@ def main(args):
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     print(f"Optimizer: Adam (lr={args.lr})")
 
-    # Load data with our bucketed dataloader
+    # Load data with train/test split
     print(f"\nLoading data from: {args.data_path}")
     print(f"Target tokens per batch: {args.target_tokens}")
     print(f"Max sequence length: {args.max_length}")
+    print(f"Test split: {args.test_split * 100:.1f}%")
 
-    dataloader, tokenizer = create_dataloader(
+    train_dataloader, test_dataloader, tokenizer = create_train_test_dataloaders(
         fasta_path=args.data_path,
         target_tokens=args.target_tokens,
-        shuffle=True,
         max_length=args.max_length,
-        num_workers=args.num_workers
+        num_workers=args.num_workers,
+        test_split=args.test_split,
+        seed=args.seed
     )
 
-    print(f"\nTotal batches per epoch: {len(dataloader):,}")
+    print(f"\nTrain batches per epoch: {len(train_dataloader):,}")
+    print(f"Test batches: {len(test_dataloader):,}")
     print(f"Masking ratio: {args.mask_ratio}")
 
     # Training loop
@@ -86,8 +124,8 @@ def main(args):
         num_batches = 0
         epoch_start_time = time.time()
 
-        # Wrap dataloader with tqdm for progress tracking
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{args.num_epochs}")
+        # Wrap train dataloader with tqdm for progress tracking
+        pbar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{args.num_epochs} [Train]")
 
         for batch_idx, batch in enumerate(pbar):
             step_start_time = time.time()
@@ -146,11 +184,17 @@ def main(args):
                 })
 
         # Epoch summary
-        avg_loss = total_loss / num_batches
+        train_avg_loss = total_loss / num_batches
         epoch_time = time.time() - epoch_start_time
+
+        # Evaluate on test set
+        print(f"\nEvaluating on test set...")
+        test_loss = evaluate(model, test_dataloader, tokenizer, device, args.mask_ratio)
+
         print(f"\n{'='*80}")
         print(f"Epoch {epoch+1}/{args.num_epochs} completed")
-        print(f"Average Loss: {avg_loss:.4f}")
+        print(f"Train Loss: {train_avg_loss:.4f}")
+        print(f"Test Loss:  {test_loss:.4f}")
         print(f"Total Batches: {num_batches:,}")
         print(f"Epoch Time: {epoch_time/60:.2f} minutes")
         print(f"{'='*80}\n")
@@ -158,7 +202,8 @@ def main(args):
         # Log epoch metrics to wandb
         if args.use_wandb:
             wandb.log({
-                "epoch/avg_loss": avg_loss,
+                "epoch/train_loss": train_avg_loss,
+                "epoch/test_loss": test_loss,
                 "epoch/time_minutes": epoch_time / 60,
                 "epoch/batches": num_batches,
                 "epoch": epoch + 1,
@@ -171,7 +216,8 @@ def main(args):
                 'epoch': epoch + 1,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_loss,
+                'train_loss': train_avg_loss,
+                'test_loss': test_loss,
             }, checkpoint_path)
             print(f"Checkpoint saved to {checkpoint_path}\n")
 
@@ -200,6 +246,10 @@ if __name__ == "__main__":
                        help="Maximum sequence length")
     parser.add_argument("--num_workers", type=int, default=0,
                        help="Number of dataloader workers")
+    parser.add_argument("--test_split", type=float, default=0.1,
+                       help="Fraction of data to use for test set (default: 0.1 = 10%%)")
+    parser.add_argument("--seed", type=int, default=42,
+                       help="Random seed for reproducible train/test splits")
 
     # Training arguments
     parser.add_argument("--num_epochs", type=int, default=3,
