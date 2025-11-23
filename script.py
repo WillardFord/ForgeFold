@@ -41,17 +41,22 @@ def main(args):
         attention_mask = (input_ids != tokenizer.pad_idx)
         return input_ids, attention_mask
 
-    # Load sequences
-    ### TODO: This is a temporary dataset class, we need to modify it to be a proper dataset class
-    dataset = ProteinDataset(args.data_path, tokenizer)
-    sequences = dataset.sequences
+    # Load data
+    if args.buckets_path:
+        # Load pre-bucketed data
+        buckets = torch.load(args.buckets_path)
+        total_seqs = sum(len(v) for v in buckets.values())
+        print(f"Loaded {total_seqs} sequences from pre-bucketed data")
+    else:
+        # Load from FASTA and bucket
+        dataset = ProteinDataset(args.data_path, tokenizer)
+        sequences = dataset.sequences
+        buckets = defaultdict(list)
+        for seq in sequences:
+            bucket = get_bucket(len(seq))
+            buckets[bucket].append(seq)
+        print(f"Loaded {len(sequences)} sequences from FASTA")
 
-    buckets = defaultdict(list)
-    for seq in sequences:
-        bucket = get_bucket(len(seq))
-        buckets[bucket].append(seq)
-
-    print(f"Loaded {len(sequences)} sequences")
     print(f"Buckets: {[(k, len(v)) for k, v in sorted(buckets.items())]}")
 
     # Training loop
@@ -90,8 +95,8 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train protein language model")
-    ### TODO: This is a temporary dataset class, we need to modify it to be a proper dataset class
-    parser.add_argument("--data_path", type=str, default="/Users/liyuxin/Documents/zotero/PhD/Course/final_project/ForgeFold/uniparc30_sample_100.fasta", help="Path to FASTA file")
+    parser.add_argument("--buckets_path", type=str, default=None, help="Path to pre-bucketed data (torch file)")
+    parser.add_argument("--data_path", type=str, default="/Users/liyuxin/Documents/zotero/PhD/Course/final_project/ForgeFold/uniparc30_sample_100.fasta", help="Path to FASTA file (used if buckets_path not provided)")
     parser.add_argument("--batch_size", type=int, default=32, help="Batch size")
     parser.add_argument("--num_epochs", type=int, default=3, help="Number of epochs")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
