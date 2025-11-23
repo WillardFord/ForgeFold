@@ -1,0 +1,25 @@
+# Training configuration for ForgeFold
+
+# Data
+buckets_path: null  # Path to pre-bucketed data (optional)
+data_path: "data/uniparc30_sample_100.fasta"
+
+# Model
+vocab_size: 32
+d_model: 512
+n_layers: 24
+n_heads: 8
+
+# Training
+batch_size: 32
+num_epochs: 3
+lr: 1.0e-4
+mask_ratio: 0.15
+
+# Logging
+log_interval: 10
+
+# Checkpointing
+save_checkpoints: true
+checkpoint_dir: "checkpoints"
+save_interval: 1
