@@ -90,3 +90,21 @@ Boltz-1 (2024) - Wohlwend, J., et al. "Boltz-1: Democratizing biomolecular inter
 - How does ESM fold do protein tokenization?
 - What open models and weights are there for ESM2
 - What is the AlphaFold3 diffusion model structure? Is it opensource or openweight? How was it trained?
+
+
+```
+python train.py \
+    --data_path /path/to/uniparc30_10m.fasta \
+    --target_tokens 32768 \
+    --max_length 16384 \
+    --num_epochs 1 \
+    --lr 1e-4 \
+    --weight_decay 0.01 \
+    --mask_ratio 0.15 \
+    --use_amp \
+    --use_wandb \
+    --wandb_project forgefold \
+    --wandb_run_name plm-10m-run1
+
+```
+
