@@ -3,12 +3,14 @@ Training script for protein language model with MLM objective
 Uses bucketed dataloader with constant token budget for efficient training
 """
 
-from loss import apply_mask, mlm_loss_function
-from plm import ProteinLanguageModel
-from dataloader import create_train_test_dataloaders
+import argparse
+import sys
+sys.path.insert(0, 'src')
+
+from forgefold import ESMCTokenizer, ProteinLanguageModel, apply_mask, mlm_loss_function
+from forgefold.data import create_train_test_dataloaders
 import torch
 import torch.optim as optim
-import argparse
 from tqdm import tqdm
 import wandb
 import time
@@ -17,7 +19,7 @@ import os
 from pathlib import Path
 
 
-def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15):
+def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15, use_amp=False, dtype=torch.float32):
     """
     Evaluate model on a dataset
 
@@ -41,9 +43,10 @@ def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15):
                 mask_ratio=mask_ratio
             )
 
-            # Forward pass
-            logits = model(masked_input, mask=attention_mask)
-            loss = mlm_loss_function(logits, labels, mlm_mask)
+            # Forward pass with mixed precision
+            with torch.amp.autocast('cuda', enabled=use_amp, dtype=dtype):
+                logits = model(masked_input, mask=attention_mask)
+                loss = mlm_loss_function(logits, labels, mlm_mask)
 
             total_loss += loss.item()
             num_batches += 1
@@ -56,6 +59,13 @@ def main(args):
     print("=" * 80)
     print("Protein Language Model Training")
     print("=" * 80)
+
+    # Setup mixed precision training
+    use_amp = args.use_amp and torch.cuda.is_available()
+    dtype = torch.bfloat16 if use_amp else torch.float32
+    scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+
+    print(f"\nMixed Precision Training: {'Enabled (bfloat16)' if use_amp else 'Disabled (float32)'}")
 
     # Setup CSV logging
     batch_log_path = None
@@ -101,24 +111,44 @@ def main(args):
                 "target_tokens": args.target_tokens,
                 "num_epochs": args.num_epochs,
                 "learning_rate": args.lr,
+                "weight_decay": args.weight_decay,
                 "mask_ratio": args.mask_ratio,
-                "optimizer": "Adam",
+                "optimizer": "AdamW",
                 "device": str(device),
+                "mixed_precision": "bfloat16" if use_amp else "float32",
             }
         )
         print(f"\nWandB initialized: {args.wandb_project}/{args.wandb_run_name}")
 
     # Setup model and optimizer
     print("\nInitializing model...")
-    model = ProteinLanguageModel()
+    # Use flash attention, but PyTorch's built-in version is more compatible with AMP
+    model = ProteinLanguageModel(use_flash=True)
     model = model.to(device)
     print(f"Model parameters: {model.num_parameters():,}")
+
+    # Note: When using AMP, PyTorch's built-in flash attention (F.scaled_dot_product_attention)
+    # works seamlessly. The dedicated flash-attn library requires manual dtype management.
 
     if args.use_wandb:
         wandb.watch(model, log="all", log_freq=args.wandb_log_freq)
 
-    optimizer = optim.Adam(model.parameters(), lr=args.lr)
-    print(f"Optimizer: Adam (lr={args.lr})")
+    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    print(f"Optimizer: AdamW (lr={args.lr}, weight_decay={args.weight_decay})")
+
+    # Load checkpoint if resuming
+    start_epoch = 0
+    if args.resume:
+        print(f"\nLoading checkpoint from: {args.resume}")
+        checkpoint = torch.load(args.resume, map_location=device)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        start_epoch = checkpoint['epoch']
+        print(f"Resumed from epoch {start_epoch}")
+        if 'train_loss' in checkpoint:
+            print(f"Previous train loss: {checkpoint['train_loss']:.4f}")
+        if 'test_loss' in checkpoint:
+            print(f"Previous test loss: {checkpoint['test_loss']:.4f}")
 
     # Load data with train/test split
     print(f"\nLoading data from: {args.data_path}")
@@ -144,7 +174,7 @@ def main(args):
     print("Starting Training")
     print("=" * 80)
 
-    for epoch in range(args.num_epochs):
+    for epoch in range(start_epoch, args.num_epochs):
         model.train()
         total_loss = 0
         num_batches = 0
@@ -168,14 +198,16 @@ def main(args):
                 mask_ratio=args.mask_ratio
             )
 
-            # Forward pass
+            # Forward pass with mixed precision
             optimizer.zero_grad()
-            logits = model(masked_input, mask=attention_mask)
-            loss = mlm_loss_function(logits, labels, mlm_mask)
+            with torch.amp.autocast('cuda', enabled=use_amp, dtype=dtype):
+                logits = model(masked_input, mask=attention_mask)
+                loss = mlm_loss_function(logits, labels, mlm_mask)
 
-            # Backward pass
-            loss.backward()
-            optimizer.step()
+            # Backward pass with gradient scaling
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
             # Track metrics
             total_loss += loss.item()
@@ -231,7 +263,7 @@ def main(args):
 
         # Evaluate on test set
         print(f"\nEvaluating on test set...")
-        test_loss = evaluate(model, test_dataloader, tokenizer, device, args.mask_ratio)
+        test_loss = evaluate(model, test_dataloader, tokenizer, device, args.mask_ratio, use_amp, dtype)
 
         print(f"\n{'='*80}")
         print(f"Epoch {epoch+1}/{args.num_epochs} completed")
@@ -310,8 +342,16 @@ if __name__ == "__main__":
                        help="Number of training epochs")
     parser.add_argument("--lr", type=float, default=1e-4,
                        help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=0.01,
+                       help="Weight decay for AdamW optimizer (default: 0.01)")
     parser.add_argument("--mask_ratio", type=float, default=0.15,
                        help="Ratio of tokens to mask for MLM")
+    parser.add_argument("--use_amp", action="store_true", default=True,
+                       help="Use automatic mixed precision (bfloat16) training (default: True)")
+    parser.add_argument("--no_amp", dest="use_amp", action="store_false",
+                       help="Disable mixed precision training")
+    parser.add_argument("--resume", type=str, default=None,
+                       help="Path to checkpoint file to resume training from")
 
     # Logging arguments
     parser.add_argument("--log_interval", type=int, default=100,

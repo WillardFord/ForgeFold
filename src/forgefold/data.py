@@ -6,7 +6,7 @@ Buckets sequences by length (powers of 2) to minimize padding overhead
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
-from tokenizer import ESMCTokenizer
+from .tokenizer import ESMCTokenizer
 import random
 from collections import defaultdict
 
@@ -304,57 +304,3 @@ def create_train_test_dataloaders(fasta_path, target_tokens=16384, num_workers=0
     )
 
     return train_dataloader, test_dataloader, tokenizer
-
-
-if __name__ == "__main__":
-    # Test the dataloader with 10M dataset
-    print("Creating dataloader with constant token budget...")
-    print("Loading data from: data/uniparc30_sample_10000000.fasta")
-    print("This will take a moment to scan and bucket all sequences...\n")
-
-    dataloader, tokenizer = create_dataloader(
-        fasta_path="data/uniparc30_sample_10000000.fasta",
-        target_tokens=16384,
-        shuffle=True,
-        max_length=16384
-    )
-
-    print(f"\nTotal batches: {len(dataloader):,}")
-    print(f"Tokenizer vocab size: {len(tokenizer)}")
-
-    # Test first few batches from different buckets
-    print("\nTesting batches (showing first occurrence of each bucket)...")
-    seen_buckets = set()
-    total_tokens = 0
-    batch_count = 0
-
-    for batch_idx, batch in enumerate(dataloader):
-        num_seqs = batch['input_ids'].shape[0]
-        bucket_size = batch['bucket_size']
-        actual_tokens = batch['attention_mask'].sum().item()
-        batch_tokens = num_seqs * bucket_size
-
-        # Show first batch from each bucket size
-        if bucket_size not in seen_buckets:
-            print(f"\nBatch {batch_idx + 1} (Bucket: {bucket_size}):")
-            print(f"  Input shape: {batch['input_ids'].shape}")
-            print(f"  Num sequences: {num_seqs}")
-            print(f"  Expected tokens: ~{16384} (target)")
-            print(f"  Total tokens (with padding): {batch_tokens}")
-            print(f"  Actual tokens (no padding): {actual_tokens}")
-            print(f"  Padding ratio: {(batch_tokens - actual_tokens) / batch_tokens * 100:.1f}%")
-            print(f"  Sample sequence lengths: {batch['attention_mask'].sum(dim=1).tolist()[:3]}...")
-            seen_buckets.add(bucket_size)
-
-        total_tokens += actual_tokens
-        batch_count += 1
-
-        # Stop after seeing a few batches or all bucket types
-        if batch_count >= 20 or len(seen_buckets) >= 8:
-            break
-
-    print(f"\n--- Summary ---")
-    print(f"Batches tested: {batch_count}")
-    print(f"Unique buckets seen: {sorted(seen_buckets)}")
-    print(f"Average actual tokens per batch: {total_tokens / batch_count:.1f}")
-    print("\nDataloader test complete!")

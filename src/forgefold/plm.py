@@ -118,7 +118,15 @@ class MultiHeadAttention(nn.Module):
         q, k = self.rope(q, k, seq_len)
 
         # Three-level fallback: dedicated flash-attn -> PyTorch flash -> standard
+        # Note: When using autocast, explicitly cast to the autocast dtype for flash-attn compatibility
         if self.use_flash and HAS_FLASH_ATTN:
+            # Explicitly cast to bfloat16/float16 if autocast is enabled
+            if torch.is_autocast_enabled():
+                autocast_dtype = torch.get_autocast_gpu_dtype()
+                q = q.to(autocast_dtype)
+                k = k.to(autocast_dtype)
+                v = v.to(autocast_dtype)
+
             q_flash = q.transpose(1, 2)
             k_flash = k.transpose(1, 2)
             v_flash = v.transpose(1, 2)

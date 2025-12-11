@@ -1,8 +1,14 @@
-from tokenizer import ESMCTokenizer
+"""Test tokenizer functionality"""
+
+import sys
+sys.path.insert(0, '../src')
+
+from forgefold import ESMCTokenizer
+
 
 def test_tokenizer():
     tok = ESMCTokenizer()
-    fasta_path = "/Users/liyuxin/Documents/zotero/PhD/Course/final_project/ForgeFold/uniparc30_sample_100.fasta"
+    fasta_path = "../data/uniparc30_sample_100.fasta"
 
     sequences = tok.read_fasta(fasta_path)
     print(f"Loaded {len(sequences)} sequences from FASTA")
@@ -17,6 +23,7 @@ def test_tokenizer():
         assert decoded == seq, f"Tokenizer test failed for sequence {i+1}!"
 
     print("\nTokenizer test passed!")
+
 
 if __name__ == "__main__":
     test_tokenizer()
