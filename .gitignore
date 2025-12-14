@@ -1,8 +1,9 @@
 # Ignore root-level markdown files
 /*.md
 
-# But keep README
+# But keep README and TRAINING
 !README.md
+!TRAINING.md
 
 # Ignore data directory
 /data/

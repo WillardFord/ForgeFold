@@ -19,9 +19,12 @@ import os
 from pathlib import Path
 
 
-def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15, use_amp=False, dtype=torch.float32):
+def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15, use_amp=False, dtype=torch.float32, max_batches=None):
     """
     Evaluate model on a dataset
+
+    Args:
+        max_batches: If set, only evaluate on this many batches (randomly sampled)
 
     Returns:
         avg_loss: Average loss over the dataset
@@ -31,7 +34,7 @@ def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15, use_amp=Fals
     num_batches = 0
 
     with torch.no_grad():
-        for batch in tqdm(dataloader, desc="Evaluating"):
+        for batch in tqdm(dataloader, desc="Evaluating", total=max_batches):
             # Unpack batch dictionary and move to device
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
@@ -50,6 +53,10 @@ def evaluate(model, dataloader, tokenizer, device, mask_ratio=0.15, use_amp=Fals
 
             total_loss += loss.item()
             num_batches += 1
+
+            # Early exit if we've done enough batches
+            if max_batches and num_batches >= max_batches:
+                break
 
     avg_loss = total_loss / num_batches if num_batches > 0 else 0
     return avg_loss
@@ -168,6 +175,8 @@ def main(args):
     print(f"\nTrain batches per epoch: {len(train_dataloader):,}")
     print(f"Test batches: {len(test_dataloader):,}")
     print(f"Masking ratio: {args.mask_ratio}")
+    if args.eval_interval > 0:
+        print(f"Periodic eval: {args.eval_batches} test batches every {args.eval_interval} training batches")
 
     # Training loop
     print("\n" + "=" * 80)
@@ -256,6 +265,26 @@ def main(args):
                         tokens_per_sec,
                         step_time
                     ])
+
+            # Periodic evaluation on test set sample
+            if args.eval_interval > 0 and (batch_idx + 1) % args.eval_interval == 0:
+                test_sample_loss = evaluate(
+                    model, test_dataloader, tokenizer, device,
+                    args.mask_ratio, use_amp, dtype,
+                    max_batches=args.eval_batches
+                )
+                model.train()  # Switch back to training mode
+
+                print(f"\n[Batch {batch_idx+1}] Test sample loss ({args.eval_batches} batches): {test_sample_loss:.4f}")
+
+                # Log to wandb
+                if args.use_wandb:
+                    wandb.log({
+                        "test/sample_loss": test_sample_loss,
+                        "test/sample_perplexity": 2.718281828 ** test_sample_loss,
+                        "epoch": epoch + 1,
+                        "batch": batch_idx + 1,
+                    })
 
         # Epoch summary
         train_avg_loss = total_loss / num_batches
@@ -352,6 +381,10 @@ if __name__ == "__main__":
                        help="Disable mixed precision training")
     parser.add_argument("--resume", type=str, default=None,
                        help="Path to checkpoint file to resume training from")
+    parser.add_argument("--eval_interval", type=int, default=900,
+                       help="Evaluate on test set every N training batches (default: 900)")
+    parser.add_argument("--eval_batches", type=int, default=100,
+                       help="Number of test batches to sample during periodic evaluation (default: 100)")
 
     # Logging arguments
     parser.add_argument("--log_interval", type=int, default=100,

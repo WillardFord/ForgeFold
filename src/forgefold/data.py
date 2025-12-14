@@ -137,16 +137,19 @@ class BucketedBatchSampler:
             # batch_size * bucket_size ≈ target_tokens
             self.bucket_batch_sizes[bucket_size] = max(1, self.target_tokens // bucket_size)
 
-        # Shuffle within buckets if requested
-        if self.shuffle:
-            for bucket_size in self.bucket_indices:
-                random.shuffle(self.bucket_indices[bucket_size])
-
     def __iter__(self):
-        # Create list of all batches
+        # Create list of all batches (reshuffle each time __iter__ is called)
         all_batches = []
 
-        for bucket_size, indices in self.bucket_indices.items():
+        # Make a copy of indices to shuffle without modifying original
+        bucket_indices_copy = {k: v.copy() for k, v in self.bucket_indices.items()}
+
+        # Shuffle within buckets if requested
+        if self.shuffle:
+            for bucket_size in bucket_indices_copy:
+                random.shuffle(bucket_indices_copy[bucket_size])
+
+        for bucket_size, indices in bucket_indices_copy.items():
             batch_size = self.bucket_batch_sizes[bucket_size]
             # Split bucket into batches with appropriate size
             for i in range(0, len(indices), batch_size):
@@ -295,7 +298,7 @@ def create_train_test_dataloaders(fasta_path, target_tokens=16384, num_workers=0
     test_dataloader, _ = create_dataloader(
         fasta_path=fasta_path,
         target_tokens=target_tokens,
-        shuffle=False,  # Don't shuffle test set
+        shuffle=True,  # Shuffle so periodic eval samples different batches each time
         num_workers=num_workers,
         max_length=max_length,
         split='test',
