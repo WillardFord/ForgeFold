@@ -77,10 +77,12 @@ def main(args):
     # Setup CSV logging
     batch_log_path = None
     epoch_log_path = None
+    eval_log_path = None
     if args.log_dir:
         os.makedirs(args.log_dir, exist_ok=True)
         batch_log_path = os.path.join(args.log_dir, "batch_metrics.csv")
         epoch_log_path = os.path.join(args.log_dir, "epoch_metrics.csv")
+        eval_log_path = os.path.join(args.log_dir, "eval_metrics.csv")
 
         # Initialize batch log file
         with open(batch_log_path, 'w', newline='') as f:
@@ -93,9 +95,15 @@ def main(args):
             writer = csv.writer(f)
             writer.writerow(['epoch', 'train_loss', 'test_loss', 'epoch_time_minutes', 'total_batches'])
 
+        # Initialize eval log file for periodic evaluations
+        with open(eval_log_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['epoch', 'batch', 'test_loss', 'test_perplexity'])
+
         print(f"\nCSV logs will be saved to:")
         print(f"  Batch metrics: {batch_log_path}")
         print(f"  Epoch metrics: {epoch_log_path}")
+        print(f"  Eval metrics:  {eval_log_path}")
 
     # Setup device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -177,6 +185,35 @@ def main(args):
     print(f"Masking ratio: {args.mask_ratio}")
     if args.eval_interval > 0:
         print(f"Periodic eval: {args.eval_batches} test batches every {args.eval_interval} training batches")
+
+    # Initial evaluation before training (only if not resuming)
+    if start_epoch == 0:
+        print("\n" + "=" * 80)
+        print("Initial Evaluation (before training)")
+        print("=" * 80)
+        initial_loss = evaluate(
+            model, test_dataloader, tokenizer, device,
+            args.mask_ratio, use_amp, dtype,
+            max_batches=args.eval_batches
+        )
+        initial_perplexity = 2.718281828 ** initial_loss
+        print(f"Initial test loss: {initial_loss:.4f}")
+        print(f"Initial perplexity: {initial_perplexity:.2f}")
+
+        # Log initial eval to wandb
+        if args.use_wandb:
+            wandb.log({
+                "test/sample_loss": initial_loss,
+                "test/sample_perplexity": initial_perplexity,
+                "epoch": 0,
+                "batch": 0,
+            })
+
+        # Log initial eval to CSV
+        if eval_log_path:
+            with open(eval_log_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([0, 0, initial_loss, initial_perplexity])
 
     # Training loop
     print("\n" + "=" * 80)
@@ -275,16 +312,23 @@ def main(args):
                 )
                 model.train()  # Switch back to training mode
 
-                print(f"\n[Batch {batch_idx+1}] Test sample loss ({args.eval_batches} batches): {test_sample_loss:.4f}")
+                test_sample_perplexity = 2.718281828 ** test_sample_loss
+                print(f"\n[Batch {batch_idx+1}] Test sample loss ({args.eval_batches} batches): {test_sample_loss:.4f}, perplexity: {test_sample_perplexity:.2f}")
 
                 # Log to wandb
                 if args.use_wandb:
                     wandb.log({
                         "test/sample_loss": test_sample_loss,
-                        "test/sample_perplexity": 2.718281828 ** test_sample_loss,
+                        "test/sample_perplexity": test_sample_perplexity,
                         "epoch": epoch + 1,
                         "batch": batch_idx + 1,
                     })
+
+                # Log to CSV
+                if eval_log_path:
+                    with open(eval_log_path, 'a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([epoch + 1, batch_idx + 1, test_sample_loss, test_sample_perplexity])
 
         # Epoch summary
         train_avg_loss = total_loss / num_batches
