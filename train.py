@@ -326,6 +326,7 @@ def main(args):
 
         # Save checkpoint
         if args.save_dir and (epoch + 1) % args.save_interval == 0:
+            os.makedirs(args.save_dir, exist_ok=True)
             checkpoint_path = f"{args.save_dir}/checkpoint_epoch_{epoch+1}.pt"
             torch.save({
                 'epoch': epoch + 1,
