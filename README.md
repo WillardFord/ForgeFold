@@ -71,10 +71,16 @@ Boltz-1 (2024) - Wohlwend, J., et al. "Boltz-1: Democratizing biomolecular inter
 
 
 
+## Pretrained Weights
+
+**Encoder checkpoint (82M params, 5 epochs on 10M UniParc30 sequences):**
+- [checkpoint_epoch_5.pt](https://drive.google.com/file/d/1FPb6_jqdIbxv9gtzki_TVJRVwwnqVPjc/view?usp=drive_link)
+- Test loss: 2.104, Perplexity: 8.2
+
 ## Next Steps
-1. Train ESM2 module
-3. Train entire thing
-4. Inference
+1. Train folding trunk + diffusion decoder (Stage B)
+2. Evaluate on CASP/CAMEO benchmarks
+3. Inference pipeline
 
 
 ## Terms that I'm gonna google later:
